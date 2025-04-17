@@ -14,6 +14,7 @@ public class ScrabService {
     @Autowired
     public ScrabService(ScrabRepository scrabRepository) {
         this.scrabRepository = scrabRepository;
+        //test
     }
 
     public String printSortedWordsByPoints(String lettersStr, String sequence, String language) {
