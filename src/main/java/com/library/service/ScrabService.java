@@ -9,6 +9,7 @@ import java.util.HashMap;
 
 @Service
 public class ScrabService {
+    @Autowired
     private final ScrabRepository scrabRepository;
 
     @Autowired

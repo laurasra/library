@@ -2,6 +2,7 @@ package com.library.repository;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.stereotype.Repository;
 
 import java.io.File;
 import java.nio.charset.Charset;
@@ -11,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 
+@Repository
 public class FileScrabRepository implements ScrabRepository{
     private static final String path = "src/main/resources/";
 

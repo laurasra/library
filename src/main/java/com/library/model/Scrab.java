@@ -8,13 +8,15 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.antlr.v4.runtime.tree.Tree;
+import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
 
 public class Scrab {
     private String language; //make an enum
     private Map<String, Integer> letterPointsMap;
     private TreeSet<String> dictionary;
-    private char[] alphabet = "abcdefghijklmnopqrstuvwxyz".toCharArray();
+    private final char[] alphabet = "abcdefghijklmnopqrstuvwxyz".toCharArray();
 
     public Scrab(String language) {
         this.language = language;
@@ -25,10 +27,11 @@ public class Scrab {
 
         try {
             ObjectMapper mapper = new ObjectMapper();
-            TypeReference<HashMap<String,Integer>> typeRef = new TypeReference<HashMap<String,Integer>>() {};
+            TypeReference<HashMap<String,Integer>> typeRef = new TypeReference<>() {};
 
             this.letterPointsMap = mapper.readValue(new File(pointsFilename), typeRef);
         }catch(Exception e){
+            System.out.println("Error reading letters file");
             System.out.println(e);
         }
 
@@ -36,6 +39,7 @@ public class Scrab {
             List<String> list = Files.readAllLines(new File(dictionaryFilename).toPath(), Charset.defaultCharset() );
             dictionary = new TreeSet<>(list);
         }catch (Exception e) {
+            System.out.println("Error reading dictionary file");
             System.out.println(e);
         }
     }
@@ -45,7 +49,9 @@ public class Scrab {
     }
 
     public Integer getLetterPoint(String letter) {
-        return getLetterPointsMap().get(letter.substring(0,1).toUpperCase());
+        return Optional.ofNullable(
+                getLetterPointsMap().get(letter.substring(0,1)))
+                .orElse(0);
     }
 
     public Integer getLetterPoint(char c) {
@@ -74,47 +80,32 @@ public class Scrab {
      * @return
      */
     public HashMap<String, Integer> getPossibleWords(String lettersStr, String sequence) {
+        lettersStr = formatWildcards(lettersStr).toUpperCase();
         HashMap<String, Integer> possibleWords = new HashMap<>();
         ArrayList<String> tokens = new ArrayList<>(Arrays
                 .stream(lettersStr.split(""))
                 .map(s -> Character.toString(s.charAt(0)))
                 .toList());
-        if (StringUtils.hasLength(sequence)) {
+        if (!ObjectUtils.isEmpty(sequence)) {
             tokens.add(sequence);
         }
         long startTimeCompose = System.nanoTime();
-        HashSet<String> composeSet = compose(tokens);
+        Set<String> composeSet = compose(tokens);
         long endTimeCompose = System.nanoTime();
+        System.out.println("Compose time (ms) : " + (endTimeCompose - startTimeCompose)/1_000_000.0);
 
-        //replace jokers after composition
-        for (String word : composeSet) {
-            if (word.contains("*")) {
-                composeSet.remove(word);
-                composeSet.add(word.replace("*", "?"));
-            }
-
-            if (word.contains("?")) {
-                String w = word;
-                //treat jokers one by one
-                while (w.contains("?")) {
-                    w = w.replaceFirst("\\?", "_");
-                    for (char c : alphabet) {
-                        composeSet.add(word.replace("_", String.valueOf(c)));
-                    }
-                }
-                composeSet.remove(word);
-            }
-
-        }
+        long startTimeReplaceWildcards = System.nanoTime();
+        replaceWildcards(composeSet, lettersStr);
+        long endTimeReplaceWildcards = System.nanoTime();
+        System.out.println("Replace wildcards time (ms) : " + (endTimeReplaceWildcards - startTimeReplaceWildcards)/1_000_000.0);
 
         System.out.println(tokens);
-        System.out.println(composeSet);
+        //System.out.println(composeSet);
         System.out.println("taille : " + composeSet.size());
-        System.out.println("Compose time (ms) : " + (endTimeCompose - startTimeCompose)/1_000_000.0);
 
         long startTimeFind = System.nanoTime();
         composeSet.stream()
-                .filter(s -> dictionary.contains(s))
+                .filter(s -> dictionary.contains(s.toUpperCase()))
                 .filter(s -> !StringUtils.hasLength(sequence) || (s.contains(sequence) && !s.equals(sequence)))
                 .forEach(s -> possibleWords.put(s, getWordPoints(s)));
         long endTimeFind = System.nanoTime();
@@ -122,9 +113,6 @@ public class Scrab {
         System.out.println("nombre de mots possibles : " + possibleWords.size());
         return possibleWords;
     }
-
-    //TODO support joker
-    //utiliser une minuscule ? ex B* -> [aB, Ba, bB, Bb, ...]
 
     public String printSortedWordsByPoints(String lettersStr, String sequence) {
         HashMap<String, Integer> wordPointsMap = getPossibleWords(lettersStr, sequence);
@@ -135,7 +123,7 @@ public class Scrab {
             }
         }
         StringBuilder resultString = new StringBuilder();
-        for (int i=maxPoints; i>0; i--) {
+        for (int i=maxPoints; i>=0; i--) {
             StringBuilder str = new StringBuilder();
             for (String word : wordPointsMap.keySet()) {
                 if (wordPointsMap.get(word).equals(i)) {
@@ -143,7 +131,7 @@ public class Scrab {
                 }
             }
             if (!str.isEmpty()) {
-                String s = "mots à " + i + " points : " + str;
+                String s = "mots à " + i + " points : " + str.toString().toUpperCase();
                 resultString.append(s);
                 resultString.append("\n");
                 System.out.println(s);
@@ -181,6 +169,47 @@ public class Scrab {
             returnSet.addAll(temp);
         }
         return returnSet;
+    }
+
+    @Deprecated
+    private Set<String> formatWildcards(TreeSet<String> composeSet) {
+        TreeSet<String> wordsToAdd = new TreeSet<>();
+        TreeSet<String> wordsToRemove = composeSet.stream()
+                .filter(word -> word.contains("*"))
+                .peek(word -> wordsToAdd.add(word.replace("*", "?")))
+                .collect(Collectors.toCollection(TreeSet<String>::new));
+        composeSet.removeAll(wordsToRemove);
+        composeSet.addAll(wordsToAdd);
+        return composeSet;
+    }
+
+    /**
+     * replace all allowed wilcards with "?" before composition
+     * @param letters
+     * @return
+     */
+    private String formatWildcards(String letters) {
+        // Todo add DEFAULT_WILDCARD and ALLOWED_WILDCARDS
+        return letters.replace("*", "?");
+    }
+
+    private void replaceWildcards(Set<String> composeSet, String letters) {
+        int wildcards = StringUtils.countOccurrencesOf(letters, "?");
+
+        for (int i = 0; i < wildcards; i++) {
+            TreeSet<String> wordsToRemove = new TreeSet<>();
+            TreeSet<String> wordsToAdd = new TreeSet<>();
+            composeSet.stream()
+                    .filter(word -> word.contains("?"))
+                    .peek(wordsToRemove::add)
+                    .forEach(word -> {
+                        for (char c : alphabet) {
+                            wordsToAdd.add(word.replaceFirst("\\?", String.valueOf(c)));
+                        }
+                    });
+            composeSet.removeAll(wordsToRemove);
+            composeSet.addAll(wordsToAdd);
+        }
     }
 }
 
